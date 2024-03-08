@@ -1,3 +1,20 @@
+# -----  BAMBOO: Bytedance AI Molecular Booster -----
+# Copyright 2022-2024 Bytedance Ltd. and/or its affiliates 
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 2 of the License, or
+# (at your option) any later version.
+
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+
+# You should have received a copy of the GNU General Public License
+# along with this program; if not, write to the Free Software
+# Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
+
 import math
 
 import torch
@@ -78,16 +95,3 @@ class ExpNormalSmearing(nn.Module):
             -self.betas
             * (torch.exp(self.alpha * (-dist + self.cutoff_lower)) - self.means) ** 2
         )
-
-class VecLayerNorm(nn.Module):
-    def __init__(self, dim, trainable=True):
-        super().__init__()
-        self.weight = nn.Parameter(torch.empty(dim), requires_grad=trainable)
-        nn.init.ones_(self.weight)
-        self.epsilon = 1e-8
-
-    def forward(self, vec):
-        dist = torch.sqrt(torch.sum(vec**2,1)+self.epsilon) # Na,D
-        dist = torch.sqrt(torch.mean(dist ** 2, dim=-1) + self.epsilon) # Na
-        vec = vec / dist.unsqueeze(-1).unsqueeze(-1)
-        return vec * self.weight.unsqueeze(0).unsqueeze(0)

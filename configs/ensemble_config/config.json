@@ -1,0 +1,22 @@
+{
+    "job_name": "ensemble_bamboo_community",
+    "training_data_path": "<path-to-your-installation>/data/train_data.pt",
+    "validation_data_path": "<path-to-your-installation>/data/val_data.pt",
+    "batch_size": 512,
+    "models": ["<path-to-your-model>/<your-model1-name>.pt", "<path-to-your-model>/<your-model2-name>.pt", "<path-to-your-model>/<your-model3-name>.pt"], 
+    "frame_directories": ["<path-to-your-frames>"],
+    "ensemble_model": "<path-to-your-model>/<your-ensemble-model>.pt",
+    "validation_split_ratio": 0.1,
+    "lr": 1e-6,
+    "epochs": 50,
+    "scheduler_gamma": 0.99,
+    "validation_interval": 10,
+    "energy_ratio": 0.3,
+    "force_ratio": 1.0,
+    "virial_ratio": 0.1,
+    "bulk_energy_ratio": 0.01,
+    "bulk_force_ratio": 3.0,
+    "bulk_virial_ratio": 0.01,
+    "max_frames_per_mixture": 960,
+    "frame_validation_interval": 3
+}

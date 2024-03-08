@@ -1,88 +1,106 @@
+# -----  BAMBOO: Bytedance AI Molecular Booster -----
+# Copyright 2022-2024 Bytedance Ltd. and/or its affiliates 
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 2 of the License, or
+# (at your option) any later version.
+
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+
+# You should have received a copy of the GNU General Public License
+# along with this program; if not, write to the Free Software
+# Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
+
 import argparse
 import json
 import os
 import random
+from datetime import datetime
 from typing import Dict, List, Optional, Union
 
 import numpy as np
 import pandas as pd
 import torch
 
-from models.bamboo_et import BambooET
-from utils.get_batch import get_batch, split_data
+from models.bamboo_get import BambooGET
+from utils.batchify import batchify
 from utils.log_helper import create_logger
+from utils.path import DATA_PATH, ENSEMBLE_PATH
 from utils.rejit import convert
 
 
-def get_parser(config_path: Optional[str] = None):
+def get_parser():
     # Create the parser
-    parser = argparse.ArgumentParser(description="Parameters for the training script")
+    parser = argparse.ArgumentParser(description="Arguments for bamboo model ensembling.")
 
     # Required arguments
-    parser.add_argument("--work_dir", type=str, default=".", help="Path to the work directory")
-    parser.add_argument("--train_cluster", type=str, default="train_pyscf_svpd_b3lyp_more_data_clean_loose_double_10192023.pt", help="Training cluster")
-    parser.add_argument("--val_cluster", type=str, default="val_pyscf_svpd_b3lyp_more_data_clean_loose_double_10192023.pt", help="Validation cluster")
-    parser.add_argument("--data_path", type=str, default="/mnt/bn/ai4s-hl/bamboo/pyscf_data/data", help="Path to the data")
-
-    parser.add_argument("--frame_folders", nargs="*", type=str, default=[], help="List of frame folders")
-    parser.add_argument("--models", nargs="*", type=str, default=[], help="List of models to be ensembled.")
-    parser.add_argument("--uncertainty_jobs", nargs="*", type=str, default=[], help="List of uncertainty jobs.")
-    parser.add_argument("--ensemble_model", type=str, default=None, help="Specify the model to be ensembled.")
-
-    # Optional arguments
-    parser.add_argument("--val_ratio", type=float, default=0.1, help="Validation ratio")
-    parser.add_argument("--scheduler_count", type=int, default=10, help="Scheduler count")
+    parser.add_argument('--config', default='', type=str, help="Path to a configuration file in JSON format.")
+    parser.add_argument('--job_name', default='default', type=str)
     
-    parser.add_argument("--energy_ratio", type=float, default=0.3, help="Energy ratio")
-    parser.add_argument("--force_ratio", type=float, default=1.0, help="Force ratio")
-    parser.add_argument("--virial_ratio", type=float, default=0.1, help="Virial ratio")
-    parser.add_argument("--dipole_ratio", type=float, default=3.0, help="Dipole ratio")
-    
-    parser.add_argument("--bulk_energy_ratio", type=float, default=0.01, help="bulk energy ratio")
-    parser.add_argument("--bulk_force_ratio", type=float, default=3.0, help="bulk force ratio")
-    parser.add_argument("--bulk_virial_ratio", type=float, default=0.001, help="bulk virial ratio")
-    
-    parser.add_argument("--batch_size", type=int, default=48, help="Batch size")
-    parser.add_argument("--epochs", type=int, default=80, help="Number of epochs")
-    parser.add_argument("--max_frame_per_mixture", type=int, default=480, help="Max frame per mixture.")
-    parser.add_argument("--frame_val_interval", type=int, default=3, help="Validation ratio")
+    # Training and validation data paths
+    parser.add_argument("--training_data_path", type=str, default="train_data.pt", help="Path to the training data file.")
+    parser.add_argument("--validation_data_path", type=str, default="val_data.pt", help="Path to the validation data file.")
+    parser.add_argument("--batch_size", type=int, default=512, help="Batch size for training and validation.")
 
-    parser.add_argument("--lr", type=float, default=1e-5, help="Learning rate")
-    parser.add_argument("--scheduler_gamma", type=float, default=0.99, help="Scheduler gamma")
+    # Data sources and model configuration
+    parser.add_argument("--models", nargs="*", type=str, default=[], help="Paths to models for uncertainty calculation.")
+    parser.add_argument("--frame_directories", nargs="*", type=str, default=[], help="Directories containing frame data.")
+    parser.add_argument("--ensemble_model", type=str, default=None, help="Path to the model used for ensemble predictions.")
 
-    parser.add_argument("--val_interval", type=int, default=10, help="val log step interval.")    
-    parser.add_argument("--config", type=str, help="Path to a configuration file in JSON format.")
+    # Training parameters
+    parser.add_argument("--validation_split_ratio", type=float, default=0.1, help="Fraction of data to use for validation.")
+    parser.add_argument("--lr", type=float, default=1e-6, help="Initial learning rate.")
+    parser.add_argument("--epochs", type=int, default=50, help="Total number of training epochs.")
+    parser.add_argument("--scheduler_gamma", type=float, default=0.99, help="Learning rate decay factor per epoch.")
+    parser.add_argument("--validation_interval", type=int, default=10, help="Interval (in epochs) between validations.")
+
+    # Data property weighting
+    parser.add_argument("--energy_ratio", type=float, default=0.3, help="Weight of energy predictions in the loss function.")
+    parser.add_argument("--force_ratio", type=float, default=1.0, help="Weight of force predictions in the loss function.")
+    parser.add_argument("--virial_ratio", type=float, default=0.1, help="Weight of virial predictions in the loss function.")
+    parser.add_argument("--bulk_energy_ratio", type=float, default=0.01, help="Weight of bulk energy predictions in the loss function.")
+    parser.add_argument("--bulk_force_ratio", type=float, default=3.0, help="Weight of bulk force predictions in the loss function.")
+    parser.add_argument("--bulk_virial_ratio", type=float, default=0.01, help="Weight of bulk virial predictions in the loss function.")
+
+    # Additional training settings
+    parser.add_argument("--max_frames_per_mixture", type=int, default=960, help="Maximum number of frames per mixture.")
+    parser.add_argument("--frame_validation_interval", type=int, default=3, help="Interval for frame-level validation checks.")
 
     args = parser.parse_args()
 
-    if isinstance(config_path, str) and os.path.isfile(config_path):
-        config_file_for_update = config_path
-    elif os.path.isfile(args.config):
-        config_file_for_update = args.config
-    else:
-        return args
-
-    with open(config_file_for_update, 'r') as f:
-        config_args = json.load(f)
-    for key, value in config_args.items():
-        if value is None:
-            continue
-        setattr(args, key, value)
+    # Load configuration from a JSON file if specified and the file exists
+    if os.path.isfile(args.config):
+        with open(args.config, 'r') as config_file:
+            config_from_file = json.load(config_file)
+    
+        # Update the command line arguments with values from the JSON configuration
+        for key, value in config_from_file.items():
+            # Skip updating args with None values from the configuration file
+            if value is not None:
+                setattr(args, key, value)
 
     return args
 
 
-class EnsembleFinetune:
+class DistillationEnsemble:
     def __init__(self, args) -> None:
         self.args = args
 
-        # Check required arguments.
-        assert bool(args.frame_folders), "uncertainty_jobs must be provided"
-        assert bool(args.models), "models must be provided"
-        assert bool(args.uncertainty_jobs), "uncertainty_jobs must be provided"
-        assert len(args.models) == len(args.uncertainty_jobs), "Number of models and uncertainty_jobs must be equal."
+        # Validate required arguments
+        if not self.args.frame_directories:
+            raise ValueError("Frame folders must be provided.")
 
-        self.work_dir = args.work_dir
+        if not self.args.models:
+            raise ValueError("Models must be provided.")
+
+        if not self.args.ensemble_model:
+            raise ValueError("Uncertainty jobs must be provided.")
+
+        self.work_dir = os.path.join(ENSEMBLE_PATH, self.args.job_name)
 
         self.frames_output = os.path.join(self.work_dir, "frame")
         self.checkpoint_output = os.path.join(self.work_dir, "checkpoints")
@@ -92,9 +110,11 @@ class EnsembleFinetune:
         for dir_tmp in make_dirs:
             os.makedirs(dir_tmp, exist_ok=True)
         
-        log_file = os.path.join(self.log_output, "ensemble.log")
-        self.logger = create_logger(name="Ensemble", log_file=log_file)
-        
+        log_file = os.path.join(self.log_output, f"ensemble_{datetime.now().strftime('%m%d%H%M')}.log")
+
+        self.logger = create_logger(name="ENSEMBLE", log_file=log_file)
+        self.logger.info(f"Initializing.")
+
         for arg in vars(args):
             val = getattr(args, arg)
             if isinstance(val, list):
@@ -103,8 +123,18 @@ class EnsembleFinetune:
             else:
                 self.logger.info(f"{arg} = {val}")
 
-        self.train_cluster = os.path.join(args.data_path, args.train_cluster)
-        self.val_cluster = os.path.join(args.data_path, args.val_cluster)
+        # Init device
+        if torch.cuda.is_available():
+            self.device = torch.device(f"cuda")
+            self.logger.info(f'device = cuda')
+        else:
+            raise RuntimeError("Cannot find CUDA device.")
+
+        # Training and validation data paths
+        self.training_data_path = os.path.join(DATA_PATH, args.training_data_path)
+        self.validation_data_path = os.path.join(DATA_PATH, args.validation_data_path)
+
+        # Placeholder for cluster data
         self._train_cluster_data = None
         self._val_cluster_data = None
         
@@ -112,7 +142,6 @@ class EnsembleFinetune:
             'energy': args.energy_ratio,
             'forces': args.force_ratio,
             'virial': args.virial_ratio,
-#            'dipole': args.dipole_ratio,
         }
 
         self.bulk_energy_ratio = args.bulk_energy_ratio
@@ -124,50 +153,43 @@ class EnsembleFinetune:
         self.lr = args.lr
         self.scheduler_gamma = args.scheduler_gamma
         
-        self.val_ratio = args.val_ratio
-        self.scheduler_count = args.scheduler_count
-        self.val_interval = args.val_interval
-
-        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        self.validation_split_ratio = args.validation_split_ratio
+        self.validation_interval = args.validation_interval
 
         self.epochs = args.epochs
-        self.max_frame_per_mixture = args.max_frame_per_mixture
-        self.frame_val_interval = args.frame_val_interval
+        self.max_frames_per_mixture = args.max_frames_per_mixture
+        self.frame_validation_interval = args.frame_validation_interval
 
-        self.frame_folders = args.frame_folders
-        # Check if all frames_dir exist
-        for dir_tmp in self.frame_folders:
-            if not os.path.isdir(dir_tmp):
-                raise NotADirectoryError(f"frames_dir {dir_tmp} not found")
+        # Assign the list of frame directories from command line arguments
+        self.frame_directories = args.frame_directories
+
+        # Verify each specified frame directory exists
+        for frame_dir in self.frame_directories:
+            if not os.path.isdir(frame_dir):
+                # Raise an error if a specified directory does not exist
+                raise NotADirectoryError(f"Frame directory {frame_dir} not found.")
+
         
-        # Assume the number of models is small, load all the models in memory.
-        self.logger.info("Start load all models.")
-        self.modules = {}
-        self.checkpoints = {}
-        for index in range(len(args.models)):
-            job = args.uncertainty_jobs[index]
-            checkpoint = args.models[index]
-
-            self.checkpoints[job] = checkpoint
-
-            # Only load model once.
-            if checkpoint in self.modules:
-                continue
-            
-            module = torch.jit.load(checkpoint, map_location=self.device)
-            self.modules[checkpoint] = module
-            
-        if args.ensemble_model is None:
-            self.logger.info(f"Ensemble model not specified, use the first model: {args.models[0]}")
-            self.ensemble_model = args.models[0]
+        self.logger.info("Initiating the loading of all models.")
+        
+        self.script_models = {}
+        
+        # Load all models into memory for efficiency, assuming a manageable total number.
+        for model in self.args.models:
+            if model not in self.script_models:    
+                self.script_models[model] = torch.jit.load(model, map_location=self.device)
+        
+        if self.args.ensemble_model is None:
+            self.ensemble_model = self.args.models[0]
+            self.logger.info(f"Ensemble model not specified, using the first model: {self.ensemble_model}")
         else:
-            self.ensemble_model = args.ensemble_model
-            if self.ensemble_model not in self.modules:
+            self.ensemble_model = self.args.ensemble_model
+            if self.ensemble_model not in self.script_models:
                 raise ValueError(f"Ensemble model {self.ensemble_model} not found in models.")
 
-        self.logger.info(f"Number of models: {len(self.modules)}")
+        self.logger.info(f"Number of models: {len(self.script_models)}")
         
-        self._cached_pt = {}
+        self._cached_frames = {}
         self.uncertainty_train = []
         self.uncertainty_val = []
         self.split_data_flag = False
@@ -175,77 +197,70 @@ class EnsembleFinetune:
     @property
     def train_cluster_data(self) -> Dict[str, torch.Tensor]:
         if self._train_cluster_data is None:
-            self._train_cluster_data = torch.load(self.train_cluster, map_location="cpu")
-            self.gpu_memory_usage("Load train cluster data")
+            self._train_cluster_data = torch.load(self.training_data_path, map_location="cpu")
         return self._train_cluster_data
     
     @property
     def val_cluster_data(self) -> Dict[str, torch.Tensor]:
         if self._val_cluster_data is None:
-            self._val_cluster_data = torch.load(self.val_cluster, map_location="cpu")
-            self.gpu_memory_usage("Load val cluster data")
+            self._val_cluster_data = torch.load(self.validation_data_path, map_location="cpu")
         return self._val_cluster_data
-
-    def gpu_memory_usage(self, info: str):
-        self.logger.info(f"{info} GPU memory usage: {torch.cuda.memory_allocated() / 1024 ** 2:.1f} MB")
 
     def uncertainty(self):
         self.logger.info("Start uncertainty quantification")
 
-        # Data and modules are ready, start inference.
-        config_file = os.path.join(self.frames_output, "config.json")
-        if os.path.isfile(config_file):
-            configs = json.load(open(config_file))
-        else:
-            configs = {}
+        configs = {}
 
-        data_path = []
-        # Scan the frames folder and find all the data.
-        # The code will scan recuivesively.
-        for dir_tmp in self.frame_folders:
-            for root, _, files in os.walk(dir_tmp):
-                for file in files:
-                    if file.endswith(".pt"):
-                        data_path.append(os.path.join(root, file))
-        self.logger.info(f"Number of data: {len(data_path)}")
+        data_paths = []
 
         uncertainty_count = {}
-
-        def check_uncertainty(mixture_name: str) -> bool:
-            return bool(uncertainty_count.get(mixture_name, 0) < self.max_frame_per_mixture)
 
         def add_frame_data(mixture_name: str, output_file: str):
             if mixture_name not in uncertainty_count:
                 uncertainty_count[mixture_name] = 0
             uncertainty_count[mixture_name] += 1
             
-            if uncertainty_count[mixture_name] % self.frame_val_interval:
+            if uncertainty_count[mixture_name] % self.frame_validation_interval:
                 self.uncertainty_train.append(output_file)
             else:
                 self.uncertainty_val.append(output_file)
 
-        self.logger.info("Start inference for uncertainty quantification")
-        for data in data_path:
-            if data in configs:
-                config_data = configs[data]
-                if not isinstance(config_data, dict):
-                    config_data = {}
-                current_mixture_name = config_data.get("mixture_name")
-                output_file = config_data.get("output_file")
-                if isinstance(current_mixture_name, str) \
-                        and isinstance(output_file, str) \
-                        and check_uncertainty(current_mixture_name):
-                    add_frame_data(current_mixture_name, output_file)
-                    self.logger.info(f"Skip {output_file}.")
-                    continue
-                else:
-                    self.logger.info(f"Invalid config for {data}, reload.")
-            
-            # Load data by normal way.
-            single_data: Dict[str, torch.Tensor] = torch.load(data, map_location=self.device)
-            current_mixture_name = single_data["config"]["mixture_name"]
-            if not check_uncertainty(current_mixture_name):
-                self.logger.info(f"Max frame per mixture reached for {current_mixture_name}.")
+        config_file = os.path.join(self.frames_output, "config.json")
+        if os.path.isfile(config_file):
+            self.logger.info("Skipping uncertainty quantification, config file exists.")
+
+            with open(config_file, "r") as f:
+                configs = json.load(f)
+
+            for data_path, config in configs.items():
+                mixture_name = config["mixture_name"]
+                output_file = config["data"]
+                add_frame_data(mixture_name, output_file)            
+
+            return
+        
+        # Recursively scan the frames folder to locate all data files.
+        for frame_directory in self.frame_directories:
+            if not os.path.isdir(frame_directory):
+                raise NotADirectoryError(f"Frame directory {frame_directory} not found.")
+            for root, _, files in os.walk(frame_directory):
+                for file in files:
+                    if file.endswith(".pt"):
+                        data_paths.append(os.path.join(root, file))
+        random.shuffle(data_paths)
+
+        self.logger.info(f"Number of data: {len(data_paths)}")
+
+        self.logger.info("Starting inference for uncertainty quantification.")
+
+        for data_path in data_paths:  # Assuming data_paths is defined and passed correctly.
+            # Load data directly onto the specified device.
+            single_data: Dict[str, torch.Tensor] = torch.load(data_path, map_location=self.device)
+            mixture_name = single_data["mixture_name"]
+
+            # Skip processing if max frames per mixture limit is reached.
+            if uncertainty_count.get(mixture_name, 0) > self.max_frames_per_mixture:
+                self.logger.info(f"Skipping {mixture_name}: max frames per mixture reached.")
                 continue
 
             ensemble_pred = {
@@ -255,8 +270,8 @@ class EnsembleFinetune:
             }
 
             # Collect predictions from all modules.
-            for module in self.modules.values():
-                pred = module.forward(single_data["inputs"])
+            for model in self.script_models.values():
+                pred = model.forward(single_data["inputs"])
                 
                 ensemble_pred['energy'].append(torch.flatten(pred['pred_energy'].detach()))
                 ensemble_pred['forces'].append(torch.flatten(pred['pred_forces'].detach()))
@@ -264,25 +279,30 @@ class EnsembleFinetune:
                 del pred
             ensemble_results = {}
 
-            # Compute ensemble statistics.
-            for k, values in ensemble_pred.items():
-                values_tensor = torch.stack(values, dim=0)
+            # Compute ensemble statistics for each property (energy, forces, virial).
+            for property_name, predictions in ensemble_pred.items():
+                # Stack all predictions for the current property along a new dimension.
+                predictions_tensor = torch.stack(predictions, dim=0)
                 
-                mean_tmp = torch.mean(values_tensor, dim=0).detach().cpu().tolist()
-                std_tmp = torch.std(values_tensor, dim=0).detach().cpu().tolist()
-                if k in ["force", "virial"]:
-                    mean_tmp = [mean_tmp[i:i+3] for i in range(0, len(mean_tmp), 3)]
-                    std_tmp = [std_tmp[i:i+3] for i in range(0, len(std_tmp), 3)]
-
-                ensemble_results[k] = {
-                    "mean": mean_tmp,
-                    "std": std_tmp
+                # Calculate the mean and standard deviation along the stacked dimension.
+                mean_list = torch.mean(predictions_tensor, dim=0).detach().cpu().tolist()
+                std_list = torch.std(predictions_tensor, dim=0).detach().cpu().tolist()
+                
+                # Special handling for force and virial to group results in triplets.
+                if property_name in ["force", "virial"]:
+                    mean_list = [mean_list[i:i+3] for i in range(0, len(mean_list), 3)]
+                    std_list = [std_list[i:i+3] for i in range(0, len(std_list), 3)]
+                
+                # Store the computed mean and standard deviation.
+                ensemble_results[property_name] = {
+                    "mean": mean_list,
+                    "std": std_list
                 }
 
             ensemble_results.update(single_data)
 
             # Save file {frames}/a/b/c.pt to {output}/c_{index}.pt
-            file_base_name = os.path.splitext(os.path.basename(data))[0]
+            file_base_name = os.path.splitext(os.path.basename(data_path))[0]
             index = 0
 
             def get_output_file(index: int) -> str:
@@ -293,25 +313,26 @@ class EnsembleFinetune:
                 index += 1
                 output_file = get_output_file(index)
 
-            configs[data] = {"mixture_name": current_mixture_name, "data": output_file}
-            self.logger.info(f"Source: {data}, output: {output_file}")
+            configs[data_path] = {"mixture_name": mixture_name, "data": output_file}
+            self.logger.info(f"Source: {data_path}, output: {output_file}")
             torch.save(ensemble_results, output_file)
-            add_frame_data(current_mixture_name, output_file)
+            add_frame_data(mixture_name, output_file)
 
             del single_data
         # Save configs
-        self.logger.info(f"Save config to {config_file}. The config saves the match between input and output pts.")
-        json.dump(configs, open(config_file, "w"), indent=4)
+        self.logger.info(f"Save config to {config_file}.")
+        with open(config_file, "w") as config_fp:
+            json.dump(configs, config_fp, indent=4)
         self.logger.info("Uncertainty quantification finished")
 
-    def cluster_validation(self, model: BambooET, cluster: Dict[str, torch.Tensor]) -> Dict[str, float]:
+    def cluster_validation(self, model: BambooGET, cluster: Dict[str, torch.Tensor]) -> Dict[str, float]:
         keys = ['energy', 'forces', 'virial', 'dipole']
         val_rmse = {k: [] for k in keys}
         val_data_size = len(cluster['total_charge'])
         total_step = val_data_size // self.batch_size
         for step in range(total_step):
-            batch_data = get_batch(cluster, step*self.batch_size, (step+1)*self.batch_size, device=self.device)
-            mse = model.get_mse_loss(batch_data)
+            batch_data = batchify(cluster, step*self.batch_size, (step+1)*self.batch_size, device=self.device)
+            mse, _, _ = model.get_loss(batch_data)
             for k in keys:
                 val_rmse[k].append(mse[k].item() * self.batch_size)
         total_val_rmse = {}
@@ -321,13 +342,13 @@ class EnsembleFinetune:
         total_val_rmse["cluster_dipole_rmse"] = np.sqrt(sum(val_rmse["dipole"]) / self.batch_size / total_step)
         return total_val_rmse
 
-    def bulk_validation(self, model: BambooET, file: List[str]) -> Dict[str, float]:
+    def bulk_validation(self, model: BambooGET, files: List[str]) -> Dict[str, float]:
         val_forces_rmse = []
         val_energy_rmse = []
         val_virial_rmse = []
 
-        for f in file:
-            single_data_pt = self.load_pt(f)
+        for file in files:
+            single_data_pt = self.load_frame(file)
             inputs = {k: v.to(self.device) for k, v in single_data_pt["inputs"].items()}
 
             pred = model.forward(inputs)
@@ -346,31 +367,26 @@ class EnsembleFinetune:
         result['virial_rmse'] = np.sqrt(np.mean(val_virial_rmse))
         return result
 
-    def finetune(self):
+    def should_evaluate_model(self, epoch: int) -> bool:
+        """Determine if the model should be evaluated based on the epoch."""
+        is_validation_epoch = (epoch % self.validation_interval == 0)
+        is_last_epoch = (epoch == self.epochs - 1)
+        return is_validation_epoch or is_last_epoch
+    
+    def run(self):
         if not self.uncertainty_train:
-            raise ValueError("No uncertainty_train pts.")
+            raise ValueError("No uncertainty_train frames available.")
         
-        # Save the finetuned model to {save_dir}/finetuned.pt
+        # Save the ensembled model to {save_dir}/ensembled.pt
         self.logger.info(f"Start finetuning for model: {self.ensemble_model}")
         checkpoint_path = os.path.join(self.checkpoint_output, f"ensemble.pt")
         if os.path.isfile(checkpoint_path):
             self.logger.info(f"checkpoint already exists: {checkpoint_path}")
             return
-        self.gpu_memory_usage("Before finetuning.")
 
-        module = self.modules[self.ensemble_model]
-        model = convert(module, device=self.device)
+        script_model = self.script_models[self.ensemble_model]
+        model = convert(script_model, device=self.device)
         model.train()
-        self.gpu_memory_usage("After converting to trainable model.")
-
-        previous_cluster_count = len(self.train_cluster_data["cell"])
-        target_data_size = self.batch_size * len(self.uncertainty_train)
-        if target_data_size < previous_cluster_count:
-            split_data(self.train_cluster_data, start_index=0, end_index=target_data_size, device=self.device)
-            after_cluster_count = len(self.train_cluster_data["cell"])
-            self.logger.info(f"Previous cluster: {previous_cluster_count}, Current: {after_cluster_count}")
-        else:
-            self.logger.info(f"Not enough data for finetuning. Original: {previous_cluster_count}, Target: {target_data_size}")
 
         training_curve = {
             'epoch':[],
@@ -409,26 +425,22 @@ class EnsembleFinetune:
         scheduler = torch.optim.lr_scheduler.ExponentialLR(optimizer, gamma=self.scheduler_gamma)
 
         # Evaluate the initial model.
-        self.gpu_memory_usage("First evaluate.")
         bulk_val_rmse = self.bulk_validation(model, self.uncertainty_val)
         cluster_val_rmse = self.cluster_validation(model, self.val_cluster_data)
 
         add_train_curve(-1, bulk_val_rmse, cluster_val_rmse)
         log_train_curve()
 
-        # Start finetune training
+        # Start ensemble training
         total_cluster_data = len(self.train_cluster_data['total_charge'])
         cluster_batch_num = total_cluster_data // self.batch_size
         cluster_random_index = list(range(cluster_batch_num))
         random.shuffle(cluster_random_index)
         n_cluster_index = 0
         
-        self.gpu_memory_usage("Start training.")
-
         for epoch in range(self.epochs):
             train_order = list(range(len(self.uncertainty_train)))
             random.shuffle(train_order)
-            self.gpu_memory_usage(f"Epoch: {epoch} start.")
             for idx in train_order:
                 file = self.uncertainty_train[idx]
                 single_data_pt = torch.load(file, map_location=self.device)
@@ -451,15 +463,13 @@ class EnsembleFinetune:
                 optimizer.zero_grad()
                 del inputs, pred, single_data_pt
 
+                # Training on cluster data
                 cluster_loss = torch.tensor(0.0, device=self.device)
-                #training on cluster data
-
-                optimizer.zero_grad()
                 n_cluster_index = (n_cluster_index + 1) % cluster_batch_num
-                start = cluster_random_index[n_cluster_index]
+                start = cluster_random_index[n_cluster_index] * self.batch_size
                 end = start + self.batch_size
-                batch_data = get_batch(self.train_cluster_data, start, end, device=self.device)
-                mse = model.get_mse_loss(batch_data)
+                batch_data = batchify(self.train_cluster_data, start, end, device=self.device)
+                mse, _, _ = model.get_loss(batch_data)
                 for k in self.loss_ratios.keys():
                     cluster_loss += self.loss_ratios[k] * mse[k]
                 del batch_data
@@ -467,44 +477,38 @@ class EnsembleFinetune:
                 optimizer.step()
             
             scheduler.step()
-            self.gpu_memory_usage("Complete one epoch.")
-            if (not epoch % self.val_interval) or epoch == self.epochs-1:
-                # After each epoch, evaluate the model.
+            if self.should_evaluate_model(epoch):
                 bulk_val_rmse = self.bulk_validation(model, self.uncertainty_val)
-                self.gpu_memory_usage("Complete bulk validation.")
-
                 cluster_val_rmse = self.cluster_validation(model, self.val_cluster_data)
-                self.gpu_memory_usage("Complete cluster validation.")
 
                 add_train_curve(epoch, bulk_val_rmse, cluster_val_rmse)
                 log_train_curve()
 
-        # Save finetuned model.
-        module = torch.jit.script(model)
-        torch.jit.save(module, checkpoint_path)
-        self.logger.info(f"Finetuned model saved to {checkpoint_path}")
+        # Save ensembled model.
+        script_model = torch.jit.script(model)
+        torch.jit.save(script_model, checkpoint_path)
+        self.logger.info(f"Ensembled model saved to {checkpoint_path}")
 
         # Save training curve
         curve_path = os.path.join(self.log_output, "training_curve.csv")
         df = pd.DataFrame(training_curve)
         df.to_csv(curve_path, index=False)
 
-    def load_pt(self, file: str):
-        # Load the data onto CPU if not already loaded
-        if file not in self._cached_pt:
-            self._cached_pt[file] = torch.load(file, map_location='cpu')
+    def load_frame(self, file: str) -> Dict[str, torch.Tensor]:
+        # Load a frame from the specified file. If the frame is not already cached,
+        # it loads it into the cache.
+        if file not in self._cached_frames:
+            self._cached_frames[file] = torch.load(file, map_location='cpu')
+        
+        return self._cached_frames[file]
 
-        # Transfer the data to the GPU when needed
-        return self._cached_pt[file]
 
-
-def ensemble_run(config_path: Optional[str] = None):
-    args = get_parser(config_path)
-    ensemble_finetune = EnsembleFinetune(args)
-    ensemble_finetune.uncertainty()
-    ensemble_finetune.finetune()
+def main():
+    args = get_parser()
+    distiller = DistillationEnsemble(args)
+    distiller.uncertainty()
+    distiller.run()
 
 
 if __name__ == "__main__":
-    # For local test.
-    ensemble_run()
+    main()

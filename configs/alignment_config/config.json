@@ -1,0 +1,22 @@
+{
+    "job_name": "alignment_bamboo_community",
+    "training_data_path": "<path-to-your-installation>/data/train_data.pt",
+    "validation_data_path": "<path-to-your-installation>/data/val_data.pt",
+    "model": "<path-to-your-model>/<your-alignment-model>.pt", 
+    "frame_directories": ["<path-to-your-frames>"],
+    "mixture_names": ["<your-mixture-name>"],
+    "delta_pressure": [-2000],
+    "energy_ratio": 0.3,
+    "force_ratio": 1.0, 
+    "virial_ratio": 0.1,
+    "dipole_ratio": 3.0,
+    "bulk_energy_ratio": 1e2,
+    "bulk_force_ratio": 1e6,
+    "bulk_virial_ratio": 3e3,
+    "batch_size": 512,
+    "epochs": 30,
+    "frame_val_interval": 3,
+    "max_frame_per_mixture": 30,
+    "lr": 1e-12,
+    "scheduler_gamma": 0.99
+}
