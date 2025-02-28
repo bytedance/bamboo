@@ -39,16 +39,6 @@ def convert(checkpoint, device=torch.device('cuda')):
         'Mish': nn.Mish(),
         'Softplus': nn.Softplus()
     }
-    
-    torch_script_dtype_mapper = {
-        1: torch.int8,
-        2: torch.int16,
-        3: torch.int32,
-        4: torch.int64,
-        5: torch.float16,
-        6: torch.float32,
-        7: torch.float64,
-    }
 
     nn_params_act_fn_name: str = list(model.charge_mlp.children())[1].original_name
     gnn_params_act_fn_name: str = model.act_fn.original_name
@@ -75,7 +65,9 @@ def convert(checkpoint, device=torch.device('cuda')):
         gnn_params=gnn_params
     )
     
-    origin_model.load_state_dict(model.state_dict())
+    missing_keys, unexpected_keys = origin_model.load_state_dict(model.state_dict(), strict=False)
+    print(f'missing keys in checkpoint: {missing_keys}')
+    print(f'unexpected keys in checkpoint: {unexpected_keys}')
     origin_model = origin_model.to(device)
     return origin_model
 

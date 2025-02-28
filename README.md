@@ -4,6 +4,55 @@ Welcome to the repository of BAMBOO! This repository hosts the source code for c
 
 Thank you for considering BAMBOO for your research needs. We are thrilled to be a part of your scientific journey and are eager to see how our project contributes to your outstanding results.
 
+## 2025.05 Release
+In this release, we provide the following updates about data, checkpoints, and implementation of dispersion corrections:
+
+### Dataset
+The complete training and validation DFT dataset is provided at: https://huggingface.co/datasets/mzl/bamboo
+
+### Implementation of dispersion correction 
+In the previous release, dispersion correction was constructed as element-dependent but independent of geometry. In this new release, we provide a new implementation of dispersion correction that depends on the coordination number (CN) of the atoms \[[2](#ref2), [3](#ref3)\]. This new implementation follows the original spirit of the DFT-D3(CSO) dispersion correction, with the value $a_4$ slightly adjusted for better zero-shot density prediction (see comment in `models/modules/dftd3/dftd3.py`).
+
+### Checkpoints
+In this release, we also provide the model checkpoint with the old implementation of dispersion correction that can reproduce the results presented in the paper [[1]](#ref1), as well as the model checkpoint with the newly implemented dispersion correction, at `benchmark/paper_new_disp.pt`.  These two checkpoints have similar performance in terms of prediction of density, viscosity, and ionic conductivity. Some benchmarks of the checkpoint with the newly implemented dispersion correction are listed below:
+
+| System | Predicted Density (g/ml) | Exp. Density (g/ml) | Predicted Viscosity (cP) | Exp. Viscosity (cP) | Predicted Conductivity by Mistry (mS/cm) | Predicted Conductivity by NE (mS/cm) | Exp. Conductivity(mS/cm) |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| DEC | 0.971 +- 0.003 | 0.97 | 0.769 +- 0.020 | 0.749 |
+| DMC | 1.053 +- 0.003 | 1.06 | 0.573 +- 0.011 | 0.585 |
+| EA | 0.904 +- 0.004 | 0.9 | 0.536 +- 0.013 | 0.43 |
+| EC | 1.328 +- 0.003 | 1.32 | 1.492 +- 0.021 | 1.93 |
+| FEC | 1.499 +- 0.002 | 1.477 | 2.295 +- 0.031 | 2.24-4.1 |
+| PC | 1.201 +- 0.003 | 1.2 | 1.755 +- 0.034 | 2.53 |
+| Novec7000 | 1.399 +- 0.007 | 1.4 | 0.480 +- 0.008 | 0.45 |
+| DMC_EC\|60_40\|LiPF6\|0.9 | 1.238 +- 0.003 | 1.239 | 2.942 +- 0.138 | 2.778 | 10.593 +- 0.512 | 13.560 +- 0.744 | 12.793 |
+| DMC_EC_EMC\|45_50_5\|LiPF6\|1.1 | 1.273 +- 0.004 | 1.273 | 4.207 +- 0.190 | 4.566 | 8.061 +- 0.392 | 10.596 +- 0.571 | 12.175 |
+| DMC_EC\|70_30\|LiPF6\|1.50 | 1.260 +- 0.003 | 1.268 | 4.916 +- 0.281 | 4.472 | 7.761 +- 0.282 | 10.795 +- 0.355 | 12.144 |
+| DMC\|LiFSI\|2.22 | 1.276 +- 0.003 | 1.27 | 5.406 +- 0.545 | 3.9 | 8.642 +- 0.489 | 13.338 +- 0.494 | 12.2 |
+| EC\|LiFSI\|0.49 | 1.375 +- 0.004 | 1.38 | 3.462 +- 0.129 | 4.1 | 5.913 +- 0.193 | 6.759 +- 0.241 | 8.7 |
+| EC\|LiFSI\|1.14 | 1.419 +- 0.003 | 1.43 | 7.072 +- 0.333 | 8.1 | 4.724 +- 0.279 | 6.070 +- 0.383 | 9.7 |
+| EMC | 1.018 +- 0.002 | 1 | 0.720 +- 0.009 | 0.65 |
+| VC | 1.326 +- 0.004 | 1.355 | 1.013 +- 0.010 | 1.78 |
+| ACT | 0.808 +- 0.001 | 0.79 | 0.469 +- 0.011 | 0.31 |
+| DMC\|LiFSI\|3.70 | 1.361 +- 0.003 | 1.36 | 15.443 +- 2.009 | 12.9 | 3.504 +- 0.311 | 5.524 +- 0.337 | 8.1 |
+| DMC\|LiFSI\|1.11 | 1.167 +- 0.001 | 1.18 | 1.903 +- 0.049 | 1.5 | 15.359 +- 0.504 | 20.113 +- 0.787 | 9.9 |
+| EC\|LiFSI\|3.78 | 1.555 +- 0.002 | 1.57 | 38.690 +- 7.094 | 0 | 1.434 +- 0.187 | 2.064 +- 0.164 | 2.3 |
+| EC\|LiFSI\|2.27 | 1.484 +- 0.001 | 1.5 | 18.041 +- 2.852 | 33.1 | 2.340 +- 0.354 | 3.138 +- 0.499 | 5.6 |
+| DMC_EC\|51_49\|LiFSI\|3.74 | 1.456 +- 0.002 | 1.46 | 27.497 +- 3.017 | 36.9 | 1.899 +- 0.153 | 2.772 +- 0.173 | 4.5 |
+| DMC_EC\|51_49\|LiFSI\|2.25 | 1.372 +- 0.002 | 1.38 | 10.376 +- 0.685 | 9.8 | 4.124 +- 0.214 | 5.889 +- 0.285 | 9.8 |
+| DMC_EC\|51_49\|LiFSI\|1.12 | 1.285 +- 0.002 | 1.3 | 3.777 +- 0.096 | 3.4 | 9.296 +- 0.114 | 12.336 +- 0.155 | 14 |
+| DMC_EC\|50_50\|LiPF6\|0.5 | 1.225 +- 0.002 | 1.235 | 2.120 +- 0.080 | 2.219 | 9.506 +- 0.453 | 11.011 +- 0.572 | 12.1420533 |
+| DMC_EC\|70_30\|LiPF6\|1.00 | 1.219 +- 0.003 | 1.228 | 2.877 +- 0.122 | 2.734 | 11.260 +- 0.506 | 14.655 +- 0.693 | 12.4265334 |
+| DMC_EC\|70_30\|LiPF6\|1.30 | 1.244 +- 0.002 | 1.252 | 4.111 +- 0.202 | 3.767 | 8.858 +- 0.378 | 12.098 +- 0.543 | 12.117719 |
+| MA | 1.027 +- 0.002 | 0.93 | 0.552 +- 0.018 | 0.36 |
+
+### References
+
+<a id="ref1">\[1\]</a> Gong, Sheng, et al. "A predictive machine learning force-field framework for liquid electrolyte development." Nature Machine Intelligence (2026): 1-10. \
+<a id="ref2">\[2\]</a> Grimme, Stefan, et al. "A consistent and accurate ab initio parametrization of density functional dispersion correction (DFT-D) for the 94 elements H-Pu." The Journal of chemical physics 132.15 (2010). \
+<a id="ref3">\[3\]</a> Schröder, Heiner, Anne Creon, and Tobias Schwabe. "Reformulation of the D3 (Becke–Johnson) dispersion correction without resorting to higher than C 6 dispersion coefficients." Journal of chemical theory and computation 11.7 (2015): 3163-3170.
+
+
 ## Getting Started
 
 This section will guide you on how to obtain and set up BAMBOO on your local machine for development and testing purposes.
@@ -244,7 +293,23 @@ We welcome contributions to BAMBOO! If you have suggestions or improvements, ple
 
 ## Citing BAMBOO
 
-If you use BAMBOO in your research, please cite: [BAMBOO: a predictive and transferable machine learning force field framework for liquid electrolyte development](https://arxiv.org/abs/2404.07181).
+If you use BAMBOO in your research, please cite:
+
+```bibtex
+@article{gong_predictive_2025,
+	title = {A predictive machine learning force-field framework for liquid electrolyte development},
+	volume = {7},
+	issn = {2522-5839},
+	url = {https://doi.org/10.1038/s42256-025-01009-7},
+	doi = {10.1038/s42256-025-01009-7},
+	number = {4},
+	journal = {Nature Machine Intelligence},
+	author = {Gong, Sheng and Zhang, Yumin and Mu, Zhenliang and Pu, Zhichen and Wang, Hongyi and Han, Xu and Yu, Zhiao and Chen, Mengyi and Zheng, Tianze and Wang, Zhi and Chen, Lifei and Yang, Zhenze and Wu, Xiaojie and Shi, Shaochen and Gao, Weihao and Yan, Wen and Xiang, Liang},
+	month = apr,
+	year = {2025},
+	pages = {543--552},
+}
+```
 
 ## License
 
