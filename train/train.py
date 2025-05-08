@@ -67,7 +67,6 @@ def get_parser():
     parser.add_argument('--rcut', type=float, default=5.0)
     parser.add_argument('--coul_damping_beta', type=float, default=18.7)
     parser.add_argument('--coul_damping_r0', type=float, default=2.2)
-    parser.add_argument('--disp_damping_beta', type=float, default=23.0)
     parser.add_argument('--disp_cutoff', type=float, default=10.0)
     parser.add_argument('--energy_mlp_layers', type=int, default=2)
     parser.add_argument('--charge_mlp_layers', type=int, default=2)
@@ -159,7 +158,6 @@ class BambooTrainer():
         coul_disp_params = {
             'coul_damping_beta': self.args.coul_damping_beta,
             'coul_damping_r0': self.args.coul_damping_r0,
-            'disp_damping_beta': self.args.disp_damping_beta,
             'disp_cutoff': self.args.disp_cutoff,
         }
         self.model = BambooGET(device = self.device,

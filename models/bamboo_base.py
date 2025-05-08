@@ -21,9 +21,9 @@ import torch
 import torch.nn as nn
 from torch_runstats.scatter import scatter
 
-from utils.constant import (debye_ea, ele_factor, element_c6, element_r0,
-                            ewald_a, ewald_f, ewald_p, nelems)
+from utils.constant import debye_ea, ele_factor, ewald_a, ewald_f, ewald_p, nelems
 from utils.funcs import CosineCutoff, ExpNormalSmearing
+from models.modules.dftd3 import DFTD3CSO
 
 
 class BambooBase(torch.nn.Module):
@@ -40,7 +40,6 @@ class BambooBase(torch.nn.Module):
                 coul_disp_params = {
                     'coul_damping_beta': 18.7,
                     'coul_damping_r0': 2.2,
-                    'disp_damping_beta': 23.0,
                     'disp_cutoff': 10.0
                 }):
         super(BambooBase, self).__init__()
@@ -55,9 +54,7 @@ class BambooBase(torch.nn.Module):
         self.ele_factor = ele_factor
         self.debye_ea = debye_ea
 
-        # constants for dispersion correction
-        self.c6_emb = torch.nn.Embedding.from_pretrained(torch.tensor(element_c6, device=self.device, dtype=torch.float32).unsqueeze(1), freeze=True)
-        self.r0_emb = torch.nn.Embedding.from_pretrained(torch.tensor(element_r0, device=self.device, dtype=torch.float32).unsqueeze(1), freeze=True)
+        self.dispersion = DFTD3CSO(disp_cutoff=coul_disp_params['disp_cutoff']).to(device)
 
         self.dim = nn_params['dim']
         self.num_rbf = nn_params['num_rbf']
@@ -123,31 +120,6 @@ class BambooBase(torch.nn.Module):
 
         coul_fij = dij * (fcoul / rij / rij).unsqueeze(-1)
         return ecoul, coul_fij
-
-    def get_dispersion(self, 
-                       row: torch.Tensor,
-                       col: torch.Tensor,
-                       dij: torch.Tensor,
-                       c6: torch.Tensor,
-                       r0: torch.Tensor,
-        ) -> List[torch.Tensor]:
-        '''
-            Compute D3-CSO dispersion energy and pairwise dispersion forces from C6 and r0 parameters.
-            Only used in inference. Not valid in training.
-        '''
-        rij = torch.sqrt(torch.sum(torch.square(dij), dim=-1)) 
-        c6ij = torch.sqrt(c6[row] * c6[col]) 
-        r0ij = 0.5*(r0[row] + r0[col]) 
-        
-        # D3-CSO dispersion correction
-        edisp = - c6ij / (rij ** 6 + 4.5 ** 6) * (0.85 + 0.82 / (1. + torch.exp(rij - 2.5 * r0ij)))
-        fdisp = - 6 * c6ij * rij ** 5 / ((rij ** 6 + (4.5) ** 6) ** 2) * (0.85 + 0.82 / (1. + torch.exp(rij - 2.5 * r0ij))) \
-            - c6ij / (rij ** 6 + (4.5) ** 6) * (0.82 * torch.exp(rij - 2.5 * r0ij) / ((1. + torch.exp(rij - 2.5 * r0ij))**2))
-        disp_fij = dij * (fdisp / rij).unsqueeze(-1)    
-
-        # cutoff correction to ensure smoothness at cutoff radius
-        edisp += c6ij / self.coul_disp_params['disp_cutoff']**6
-        return edisp, disp_fij
 
     def graph_nn(self, 
                 node_feat: torch.Tensor, 
@@ -352,14 +324,8 @@ class BambooBase(torch.nn.Module):
         coul_virial = 0.5 * torch.sum(coul_fij.unsqueeze(-2) * inputs['coul_edge_cell_shift'].unsqueeze(-1), dim=0)
         
         # dispersion energy, force and virial within cutoff
-        row_disp, col_disp = inputs['disp_edge_index'][0], inputs['disp_edge_index'][1] 
-        c6 = self.c6_emb(inputs['atom_types']).squeeze(-1)
-        r0 = self.r0_emb(inputs['atom_types']).squeeze(-1)
-        edisp, disp_fij = self.get_dispersion(row_disp, col_disp, inputs['disp_edge_cell_shift'], c6, r0)
-        disp_energy = 0.5 * torch.sum(edisp) 
-        disp_forces = scatter(disp_fij, row_disp, dim=0, dim_size=natoms) 
-        disp_virial = 0.5 * torch.sum(disp_fij.unsqueeze(-2) * inputs['disp_edge_cell_shift'].unsqueeze(-1), dim=0) 
-            
+        disp_energy, disp_forces, disp_virial = self.dispersion(inputs['atom_types'], inputs['disp_edge_cell_shift'], inputs['disp_edge_index'])
+
         # prepare output dictionary and convert back to float64
         outputs = dict()
         outputs['pred_energy'] = nn_energy + coul_energy + disp_energy + electronegativity_energy 

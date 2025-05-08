@@ -1,5 +1,5 @@
 {
-    "job_name": "bamboo_community_trian",
+    "job_name": "bamboo_community_train",
     "data_training": "train_data.pt",
     "data_validation": "val_data.pt",
     "random_seed": 42,
@@ -23,7 +23,6 @@
     "rcut": 5.0,
     "coul_damping_beta": 18.7,
     "coul_damping_r0": 2.2,
-    "disp_damping_beta": 23.0,
     "disp_cutoff": 10.0,
     "charge_mlp_layers": 2,
     "energy_mlp_layers": 2
