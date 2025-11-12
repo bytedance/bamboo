@@ -195,7 +195,7 @@ def fetch_pressure_volume(log_lammps: str):
         for line in lines:
             if line.startswith('  G vector'):
                 log_info['g_ewald'] = torch.tensor(float(line.split()[-1]))
-            if line.startswith('Step Temp Press'):
+            if line.strip().startswith("Step"):
                 start_flag = True
                 continue
             if not start_flag:
