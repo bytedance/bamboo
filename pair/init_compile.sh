@@ -3,7 +3,7 @@
 set -xe
 
 # Step 0: Install required packages.
-python3 -m pip install -U --no-cache-dir pip setuptools cython cmake torch_runstats numpy pandas
+python3 -m pip install -U --no-cache-dir pip setuptools cython cmake torch_runstats scipy pandas
 apt-get update -y
 apt-get install -y zip gfortran libgtest-dev libopenblas-dev libfftw3-dev libfftw3-double3 libfftw3-single3 libfftw3-3 libfftw3-bin
 
@@ -13,7 +13,7 @@ cd ${WORK_DIR}
 
 # Determine PyTorch and CUDA versions
 PYTORCH_VERSION="2.1.0"
-CUDA_VERSION="12.1"
+CUDA_VERSION="121"
 
 # Define libtorch download URL
 LIBTORCH_URL="https://download.pytorch.org/libtorch/cu${CUDA_VERSION}/libtorch-cxx11-abi-shared-with-deps-${PYTORCH_VERSION}%2Bcu${CUDA_VERSION}.zip"
