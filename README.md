@@ -90,6 +90,8 @@ bash ./build.sh
 
 > The Libtorch version is currently specified in the init_compile.sh script. If you require a different version of Libtorch, you will need to update this script accordingly.
 
+> Note that when running build.sh, if the make -j command triggers an out-of-memory error, adjust the parallelism level appropriately by specifying the number of processes (e.g., make -j 4) to reduce memory consumption.
+
 
 ## User Manual
 
@@ -156,7 +158,7 @@ To perform a MD simulation using a BAMBOO model, follow these steps:
    Execute a MD simulation by LAMMPS:
 
    ```bash
-   lmp -k on g 1 -sf kk -in in.lammps -log log.lammps > out.log 2>&1
+   <path-to-your-installation>/pair/lammps/output/lmp -k on g 1 -sf kk -in in.lammps -log log.lammps > out.log 2>&1
    ```
 
    The `in.lammps` file can be configured for your simulation needs. The `.pt` file from any MLFF generated from training, ensembling, or alignment, can be used to run the MD simulations.
@@ -181,6 +183,8 @@ To run ensemble and alignment processes, frames from MD trajectories are require
    ```
 
    The mixture-name will be used in the alignment to instruct which system is aligned.
+
+   NVT trajectories will be used for frame extraction. Ensure that the simulation folder contains the NVT trajectory.
 
 ### Ensemble a model
 
