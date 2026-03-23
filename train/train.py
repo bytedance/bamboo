@@ -28,7 +28,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 
-from models.bamboo_get import BambooGET
+from models.bamboo_gedt import BambooGEDT
 from utils.batchify import batchify
 from utils.log_helper import create_logger
 from utils.path import DATA_PATH, TRAIN_PATH
@@ -43,6 +43,7 @@ def get_parser():
     parser.add_argument('--data_training', default='train_data.pt')
     parser.add_argument('--data_validation', default='val_data.pt')
     parser.add_argument('--random_seed', default=42, type=int)
+    parser.add_argument('--fp32', default=True, type=bool)
 
     # training arguments
     parser.add_argument('--train_batch_size', default=128, type=int)
@@ -51,13 +52,11 @@ def get_parser():
     parser.add_argument('--lr', default=1e-2, type=float)
     parser.add_argument('--weight_decay', default=1e-3, type=float)
     parser.add_argument('--scheduler_gamma', default=0.99, type=float)
-    parser.add_argument('--loss_charge_ratio', default=10.0, type=float)
-    parser.add_argument('--loss_dipole_ratio', default=10.0, type=float)
     parser.add_argument('--loss_energy_ratio', default=0.01, type=float)
     parser.add_argument('--loss_forces_ratio', default=0.3, type=float)
     parser.add_argument('--loss_virial_ratio', default=0.01, type=float)
-    parser.add_argument('--charge_ub', default=2.0, type=float)
-    parser.add_argument('--qeq_force_regularizer', default=300.0, type=float)
+    parser.add_argument('--nnfij_penalty', default=1e-4, type=float)
+    parser.add_argument('--h_force_extra_ratio', default=0.3, type=float)
 
     # model arguments
     parser.add_argument('--num_layers', type=int, default=3)
@@ -65,11 +64,8 @@ def get_parser():
     parser.add_argument('--emb_dim', type=int, default=64)
     parser.add_argument('--num_heads', type=int, default=16)
     parser.add_argument('--rcut', type=float, default=5.0)
-    parser.add_argument('--coul_damping_beta', type=float, default=18.7)
-    parser.add_argument('--coul_damping_r0', type=float, default=2.2)
     parser.add_argument('--disp_cutoff', type=float, default=10.0)
     parser.add_argument('--energy_mlp_layers', type=int, default=2)
-    parser.add_argument('--charge_mlp_layers', type=int, default=2)
     
     args = parser.parse_args()
 
@@ -116,6 +112,13 @@ class BambooTrainer():
         else:
             raise RuntimeError("Cannot find CUDA device.")
 
+        # Init dtype
+        if self.args.fp32:
+            torch.set_default_dtype(torch.float32)
+        else:
+            torch.set_default_dtype(torch.float64)
+        self.dtype = torch.get_default_dtype()
+
         # Init random seed
         torch.manual_seed(args.random_seed)
         np.random.seed(args.random_seed)
@@ -125,16 +128,13 @@ class BambooTrainer():
         self.loss_ratios['energy'] = self.args.loss_energy_ratio
         self.loss_ratios['forces'] = self.args.loss_forces_ratio
         self.loss_ratios['virial'] = self.args.loss_virial_ratio
-        self.loss_ratios['charge'] = self.args.loss_charge_ratio
-        self.loss_ratios['dipole'] = self.args.loss_dipole_ratio
         self.loss_unit = {
             'energy': 'kcal/mol',
             'forces': 'kcal/mol/Ang',
             'virial': 'kcal/mol',
-            'charge': 'a.u.',
-            'dipole': 'Debye',
         }
-        self.qeq_force_regularizer = self.args.qeq_force_regularizer
+        self.nnfij_penalty_ratio = self.args.nnfij_penalty
+        self.h_force_extra_ratio = self.args.h_force_extra_ratio
 
         # Init dataset
         self.train_data = torch.load(os.path.join(DATA_PATH, self.args.data_training), map_location='cpu')
@@ -145,9 +145,7 @@ class BambooTrainer():
             'dim': self.args.emb_dim,
             'num_rbf': self.args.num_rbf,
             'rcut': self.args.rcut,
-            'charge_ub': self.args.charge_ub,
             'act_fn': nn.SiLU(),
-            'charge_mlp_layers': self.args.charge_mlp_layers,
             'energy_mlp_layers': self.args.energy_mlp_layers,
         }
         gnn_params = {
@@ -156,11 +154,10 @@ class BambooTrainer():
             'act_fn': nn.SiLU(),
         }
         coul_disp_params = {
-            'coul_damping_beta': self.args.coul_damping_beta,
-            'coul_damping_r0': self.args.coul_damping_r0,
             'disp_cutoff': self.args.disp_cutoff,
         }
-        self.model = BambooGET(device = self.device,
+        self.model = BambooGEDT(device = self.device,
+                                dtype = self.dtype,
                                 coul_disp_params = coul_disp_params,
                                 nn_params = nn_params,
                                 gnn_params = gnn_params)
@@ -214,13 +211,15 @@ class BambooTrainer():
             self.optimizer.zero_grad()
             mse, mae, penalty = self.model.get_loss(batch_data)
             data_length = len(batch_data['total_charge'])
-            qeq_force = penalty['qeq_force']
+            msnnfij = penalty['msnnfij']
+            mse_h_force = penalty['mse_h_force']
             loss = 0.
             for k in mse.keys():
-                train_rmse[k].append(mse[k].item() * data_length)
-                train_mae[k].append(mae[k].item() * data_length)
+                train_rmse[k].append(mse[k].item() * (data_length))
+                train_mae[k].append(mae[k].item() * (data_length))
                 loss += self.loss_ratios[k] * mse[k]
-            loss += qeq_force * self.qeq_force_regularizer
+            loss += msnnfij * self.nnfij_penalty_ratio
+            loss += mse_h_force * self.loss_ratios['forces'] * self.h_force_extra_ratio
             loss.backward()
             return loss
 

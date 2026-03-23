@@ -20,12 +20,12 @@ import argparse
 import torch
 import torch.nn as nn
 
-from models.bamboo_get import BambooGET
+from models.bamboo_gedt import BambooGEDT
 
 
 def convert(checkpoint, device=torch.device('cuda')):
     if isinstance(checkpoint, str):
-        model = torch.jit.load(checkpoint)
+        model = torch.jit.load(checkpoint, map_location=device)
     elif isinstance(checkpoint, torch.jit.RecursiveScriptModule):
         model = checkpoint
     else:
@@ -39,16 +39,28 @@ def convert(checkpoint, device=torch.device('cuda')):
         'Mish': nn.Mish(),
         'Softplus': nn.Softplus()
     }
+    
+    torch_script_dtype_mapper = {
+        1: torch.int8,
+        2: torch.int16,
+        3: torch.int32,
+        4: torch.int64,
+        5: torch.float16,
+        6: torch.float32,
+        7: torch.float64,
+    }
 
-    nn_params_act_fn_name: str = list(model.charge_mlp.children())[1].original_name
+    used_dtype_int = model.dtype
+    used_dtype = torch_script_dtype_mapper[used_dtype_int]
+    torch.set_default_dtype(used_dtype)
+
+    nn_params_act_fn_name: str = list(model.energy_mlp.children())[1].original_name
     gnn_params_act_fn_name: str = model.act_fn.original_name
     nn_params = {
         'dim': model.dim,
         'num_rbf': model.num_rbf,
         'rcut': model.rcut,
-        'charge_ub': model.charge_ub,
         'act_fn': act_fn_map[nn_params_act_fn_name],
-        'charge_mlp_layers': model.charge_mlp_layers,
         'energy_mlp_layers': model.energy_mlp_layers,
     }
 
@@ -58,16 +70,15 @@ def convert(checkpoint, device=torch.device('cuda')):
         'act_fn': act_fn_map[gnn_params_act_fn_name]
     }
 
-    origin_model = BambooGET(
-        device=model.device, 
+    origin_model = BambooGEDT(
+        device=device, 
+        dtype=used_dtype,
         coul_disp_params=model.coul_disp_params,
         nn_params=nn_params,
         gnn_params=gnn_params
     )
     
-    missing_keys, unexpected_keys = origin_model.load_state_dict(model.state_dict(), strict=False)
-    print(f'missing keys in checkpoint: {missing_keys}')
-    print(f'unexpected keys in checkpoint: {unexpected_keys}')
+    origin_model.load_state_dict(model.state_dict())
     origin_model = origin_model.to(device)
     return origin_model
 
