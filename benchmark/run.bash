@@ -1,0 +1,1 @@
+lmp -k on g 1 -sf kk -in kappa.lammps
