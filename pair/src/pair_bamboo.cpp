@@ -53,8 +53,8 @@ PairBAMBOO::PairBAMBOO(LAMMPS *lmp) : Pair(lmp) {
     manybody_flag = 1;
     evflag = 1;
     msmflag = 1;
-    ewaldflag = 1;
-    pppmflag = 1;
+    ewaldflag = 0;
+    pppmflag = 0;
 
     int device_count = torch::cuda::device_count();
     if (device_count == 0) {
@@ -114,13 +114,7 @@ void PairBAMBOO::init_style(){
     auto req = neighbor->requests[irequest];
     req->enable_full();
 
-    // Safely access and store the Ewald summation accuracy parameter, if applicable
-    if (force->kspace && std::isnormal(force->kspace->g_ewald)) {
-        g_ewald = force->kspace->g_ewald;
-    } else {
-        g_ewald = 0.0; // Default to 0.0 if kspace is not used or g_ewald is not valid
-        fmt::print("pair_bamboo: KSAPCE is not set or is not valid. Defaulting to 0.0 for g_ewald.\n");
-    }
+	g_ewald = 0.0;
 }
 
 void *PairBAMBOO::extract(const char *str, int &dim)
