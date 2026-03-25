@@ -44,11 +44,8 @@ The `benchmark/` folder contains materials for reproducing and understanding the
 - **MD simulation setup files** for thermal conductivity calculations;
 - the **checkpoints** used in the benchmark;
 - required **input files** for simulations;
-- simulation outputs such as **log files**, **temperature profiles**, and other intermediate results;
 - **data post-processing** and **thermal conductivity analysis notebook**;
 - **bash scripts** used to run the simulations.
-
-Since the MD simulations for thermal conductivity are long, we provide **sliced / segmented simulation results** instead of only a single monolithic trajectory output. These segments can be used together for post-processing and analysis.
 
 ## Scope of this branch
 
