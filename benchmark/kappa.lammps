@@ -1,0 +1,36 @@
+units           real
+atom_style      full
+boundary        p p p
+
+atom_modify     map yes
+read_data	    in.data
+
+pair_style      bamboo 5.0 5.0 10.0 1
+pair_coeff      benchmark.pt H C O
+
+neighbor        3.0 bin
+neigh_modify	delay 0 check yes
+
+timestep        0.5
+velocity        all create 298 123456 mom yes rot yes dist gaussian
+
+compute         ke all ke/atom
+variable        kB equal 0.0019872041       # Boltzmann const. (kcal/mol·K)
+variable        temp atom c_ke/(1.5*${kB})  # per-atom temperature (K)
+
+fix             1 all nve
+
+compute         layers all chunk/atom bin/1d z lower 0.05 units reduced
+fix             2 all ave/chunk 10 100 1000 layers v_temp file profile.mp
+fix             3 all thermal/conductivity 500 z 20
+
+variable        tdiff equal f_2[11][3]-f_2[1][3]
+thermo_style    custom step temp epair etotal f_3 v_tdiff
+thermo_modify   colname f_3 E_delta colname v_tdiff dTemp_step
+
+fix             ave all ave/time 1 1 1000 v_tdiff ave running
+thermo_style    custom step temp epair etotal f_3 v_tdiff f_ave
+thermo_modify   colname f_3 E_delta colname v_tdiff dTemp_step colname f_ave dTemp
+
+thermo          1000
+run             4000000
